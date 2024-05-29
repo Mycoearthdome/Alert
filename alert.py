@@ -5,6 +5,7 @@ import socketserver
 import curses
 import time
 import subprocess
+import os
 
 from fortune import fortune
 from country_list import countries_for_language
@@ -26,7 +27,40 @@ country_names_by_whois_code['EU'] = "EURO ZONE" # It sometimes is that Whois wou
 
 IPs = {}
 StatsCountries = {}
+LogFile = "alert_log.txt"
 
+# Load the IPs and Dountry Database from log
+def LoadLogs(LogFile):
+  global IPs
+  Messages = []
+  if os.path.exists(LogFile):
+    f = open(LogFile)
+    Log = f.readlines()
+    f.close()
+
+    LogEntries = [Entry for Entry in Log]
+    ListLogEntries = []
+    Count = 0
+    for line in LogEntries:
+      if "<--- " in line:
+        ListLogEntries.append(line)
+      else:
+        if line != "<>\n":
+          ListLogEntries[Count] += line
+        else:
+          Count += 1
+
+    for Entry in ListLogEntries:
+      Country = Entry.split(" <--- ")[0]
+      IPAddress = Entry.split(" <--- ")[1].split("---> ")[0]
+      Message = Entry.split("---> ")[1]
+      if IPAddress in IPs:
+        IPs[IPAddress][Country].append(Message)
+      else:
+        Messages.append(Message)
+        IPs[IPAddress] = {Country:Messages}
+        Messages = []
+      
 # Initialize GLOBAL Windows
 scrStats = curses.initscr()
 curses.start_color()
@@ -41,8 +75,8 @@ SysopWindow = curses.newwin(5, width, height - 5, 0)
 StatWindow1.addstr(0,0, "-== Stats #1==-\n")
 StatWindow2.addstr(0,0, "-== Stats #2==-\n")
 StatWindow3.addstr(0,0, "-== Stats #3==-\n")
-LogWindow.addstr(0,0, "-==Log==-\n")
-SysopWindow.addstr(0,0,"This is sysop window:")
+LogWindow.addstr(0,0, "-== Log ==-\n")
+SysopWindow.addstr(0,0,"This is the sysop window:")
 StatWindow1.refresh()
 StatWindow2.refresh()
 StatWindow3.refresh()
@@ -172,7 +206,7 @@ class MyHandler(BaseHTTPRequestHandler):
     print()
 
   def do_GET(self):
-    global IPs, country_names_by_whois_code, LogWindow, SysopWindow
+    global IPs, country_names_by_whois_code, LogWindow, SysopWindow, LogFile
     Messages = []
     Country = None
     # Get client IP address
@@ -191,15 +225,17 @@ class MyHandler(BaseHTTPRequestHandler):
     self.send_header('Content-type', 'text/html')
     self.end_headers()
     self.wfile.write(response.encode('utf-8'))
-    f = open("alert_log.txt", "a")
+
+    f = open(LogFile, "a")
 
     if client_ip not in IPs:
       #run whois on ip target
       CountryCode = WhoisQueryCountry(client_ip)
       
       if CountryCode is not None:
-        Country = country_names_by_whois_code[CountryCode]
-        RunStats(Country)
+        if CountryCode in country_names_by_whois_code:
+          Country = country_names_by_whois_code[CountryCode]
+          RunStats(Country)
     else:
       #use what we have already
       Countries = IPs[client_ip].keys()
@@ -227,10 +263,10 @@ class MyHandler(BaseHTTPRequestHandler):
               LogWindow.refresh()
               Cursor = 0  
               LogWindow.addstr(country+" <---" + client_ip+ "---> " + message+"\n")
-              f.write(country+" <---" + client_ip + "--> "+message+"\n\n")
+              f.write(country+" <---" + client_ip + "---> "+message+"\n\n<>\n")
             else:
               LogWindow.addstr(country+" <---" + client_ip+ "---> " + message+"\n")
-              f.write(country+" <---" + client_ip + "--> "+message+"\n\n")
+              f.write(country+" <---" + client_ip + "---> "+message+"\n\n<>\n")
       SysopWindow.clear()
       SysopWindow.refresh()
     else:
@@ -244,17 +280,30 @@ class MyHandler(BaseHTTPRequestHandler):
         IPs.update({client_ip:{Country:Messages}})
       if Country is None:
         LogWindow.addstr(client_ip+ "---> "+  Message+"\n")
-        f.write(client_ip + "---> "+Message+"\n\n")
+        f.write(client_ip + "---> "+Message+"\n\n<>\n")
       else:
         LogWindow.addstr(Country+" <--- " +client_ip+ "---> "+  Message + "\n")
-        f.write(Country + " <--- " + client_ip + "---> "+Message+"\n\n")
+        f.write(Country + " <--- " + client_ip + "---> "+Message+"\n\n<>\n")
     LogWindow.refresh()
     f.close()
 
 def main():
-
-  httpd = socketserver.TCPServer(("0.0.0.0", 12000), MyHandler)
-  httpd.serve_forever()
+  global LogFile, SysopWindow
+  Restarts = 0
+  while True:
+    try:
+      SysopWindow.clear()
+      if Restarts > 0: 
+        SysopWindow.addstr(2, 2, "Restarted..." + Restarts + " times.")
+        SysopWindow.refresh()
+      LoadLogs(LogFile)
+      httpd = socketserver.TCPServer(("0.0.0.0", 12000), MyHandler)
+      httpd.serve_forever()
+    except:
+      Restarts += 1
+      httpd.shutdown()
+      httpd.server_close()
+      continue
 
 if __name__ == "__main__":
   main()
