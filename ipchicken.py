@@ -4,7 +4,7 @@ from http.server import BaseHTTPRequestHandler
 import requests
 import socketserver
 
-HomeServer = "citizenzca.ddns.net:12000"
+HomeServer = "YOUR HOME SERVER HERE:12000"
 IPs = {}
 
 def callHome(client_ip):
